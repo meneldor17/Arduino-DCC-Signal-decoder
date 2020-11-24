@@ -1,7 +1,9 @@
 /*
- * Decoder for traffic light with three or two leds on ARDUINO NANO : tester for the full config 
+ * Decoder for traffic light with three or two leds on ARDUINO UNO/NANO : tester for the full config 
  * All colors will blink to allow the user to see which on is falty
  * 
+ * V1_1
+ * - create array of MCP to allow maximum of MCP per arduino
  * 
  * TRAFFIC LIGHT WITH THREE leds (GREEN, RED, YELLOW)
  * 5 decoders of traffic lights with three leds on Arduino UNO per MCP23017
@@ -13,6 +15,17 @@
  * traffic light 4 : 9,10,11
  * traffic light 5 : 12,13,14 (pin 15 is not used)
  * 
+ * MCP use with adafruit lib
+ * 
+ * MCP number in begin, statuses od A0 A1 A2, I2C address
+ * addr 0 = A2 low , A1 low , A0 low  000, 0x20
+ * addr 1 = A2 low , A1 low , A0 high 001 , 0x21
+ * addr 2 = A2 low , A1 high , A0 low  010, 0x22
+ * addr 3 = A2 low , A1 high , A0 high  011, 0x23
+ * addr 4 = A2 high , A1 low , A0 low  100, 0x24
+ * addr 5 = A2 high , A1 low , A0 high  101, 0x25
+ * addr 6 = A2 high , A1 high , A0 low  110, 0x26
+ * addr 7 = A2 high, A1 high, A0 high 111, 0x27
  * 
  * CONFIGURATION
  * MODE : determined by the common of the led, LOW if common = HIGH, HIGH if common = LOW
@@ -26,135 +39,92 @@
  *            
  ****************************************************************************************/
  
-#define CONSOLE                             // output console, delete or comment this after checking the configuration to avoid serial messages
-#define MODE   HIGH                          // LOW or HIGH for CDM Standard : HIGH
-                 
-#define NB_TRAFFIC_LIGHT  TRICOLOR           //  TRICOLOR or BICOLOR 
- 
 // MCP support
 #include <Wire.h>
 #include "Adafruit_MCP23017.h" // The one that was working better with CQRobot shield
 
-#define MCP23017_ADDR1 0x23  // I2C addr of the PCM23017 0x20 for the diymore 0x27 for the CQRobot, in case does not work  : use I2C_Scanner 
-// #define MCP23017_ADDR2 0x23  // I2C addr for second CQRobot, A3 strapped on the board
+#define INSTALLEDMCPNB 3 // number of installed MCP
+#define DELAY1 3000
+#define DELAY2 2000
 
-Adafruit_MCP23017 mcp1; // with this one we can now address the 16 ports of the MCP using I2C
-// Adafruit_MCP23017 mcp2; // with this one we can now address the 16 ports of the MCP using I2C
-
-#define MCP1PORTNUMBER 16 //we will use only 0 to 14 as we have 3 pins per traffic light
-#define MCP2PORTNUMBER 16
-
-
-// traffic light
-
-#define BICOLOR  8                     // 8 traffic lights with two leds
-#define TRICOLOR 5                     // 5 traffic lights with three leds
-#define FIRST_PIN         0             // pin of the first traffic light  on the MCP
-#define GREEN             0             // address DCC/0
-#define RED               1             // address DCC/1 
-#define YELLOW            2             // address DCC+1/0
-
-// traffic light definition
-
-struct light {
-  int address;                    // its DCC address
-  int current_position;           // green / red / yellow
-  int green;                      // pin of the green led
-  int red;                        // pin of the red led
-  int yellow;                     // pin of the yellow led
-  boolean activation_request;     // request of activation
+// having this structure will allow to match the phisical setup of your mcps
+struct mcpchip {
+  int mcpnum; // to be used with adafruit MCP23017 library to initiate (begin)
+  int mcpi2caddr; // I2C address, has to match the mcpnum num above 
+  int usedport; // really used ports has to be lower than 16 
 };
-light traffic_light[NB_TRAFFIC_LIGHT];    // the set of traffic light
 
-/********************************************************************
- * method called if a request is made by the DCC
- * 
- *******************************************************************/
+mcpchip mcp_board[8] = {
+  {7,0x27,16},
+  {3,0x23,16},
+  {2,0x22,16},
+  {1,0x21,16},
+  {4,0x24,16},
+  {5,0x25,16},
+  {0,0x20,16}
+}; 
+
+Adafruit_MCP23017 mcps[INSTALLEDMCPNB];
+
 void test_at_start() {  // cycle all lights color by color
-    for (int j=0;j<3;j++) { 
-      for (int i=0; i<5;i++)  mcp1.digitalWrite(i*3+j, LOW); //LED turns off
+  for (int i=0;i<INSTALLEDMCPNB;i++) {
+    for (int j=0;j<mcp_board[i].usedport;j++) {
+      mcps[i].digitalWrite(j, LOW); //LED turns off
+      }
     }
-  Serial.println("Lights off");
-  
-  for (int j=0;j<3;j++){
-  for (int i=0; i<TRICOLOR;i++) {
-  mcp1.digitalWrite(i*3+j, HIGH); //LED lights up
-  Serial.print("On for ");Serial.println(i+3+j);  // for debug uncomment
-  // mcp2.digitalWrite(i*3+j, HIGH); //LED lights up
-  }
-  delay(1000);
-  for (int i=0; i<5;i++)  mcp1.digitalWrite(i*3+j, LOW); //LED turns off
-  // for (int i=0; i<5;i++)  mcp2.digitalWrite(i*3+j, LOW); //LED turns off  
-  }
-  #ifdef CONSOLE
-  Serial.println(" cycle finished");
-  #endif            
-  }
-
-/**********************************************************************************************
- *  setup
- * 
- ******************************************************************************************/
+    Serial.println("Lights off");
+    
+    for (int k=0; k<3;k++) { //go through the 3 colors
+      Serial.println();Serial.print("color cycle started for color ");Serial.println(k); 
+      for (int i=0;i<INSTALLEDMCPNB;i++){ //go through the various boards
+        for (int j=0; j<int(mcp_board[i].usedport/3);j++) { // go trough the tricolor traffic lights 
+          mcps[i].digitalWrite(j*3+k, HIGH); //LED lights up
+          Serial.print(" On for ");Serial.print(j*3+k);  // for debug uncomment
+        }
+       }
+        delay(DELAY1);
+    
+          for (int i=0;i<INSTALLEDMCPNB;i++) { // lights off
+              for (int j=0;j<mcp_board[i].usedport;j++) {
+              mcps[i].digitalWrite(j, LOW); //LED turns off
+               }
+          }
+      delay(DELAY2);
+      Serial.println();Serial.print("color cycle finished for color ");Serial.println(k);      
+    }
+}
 
 void setup() {
-
- #ifdef CONSOLE
-   Serial.begin(115200);
-   Serial.println();
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+     Serial.println();
    Serial.println("Start... -------------");
    Serial.println(__FILE__);
    Serial.println(); 
-   for (int i=0; i<NB_TRAFFIC_LIGHT; i++){
-    Serial.print("traffic light");Serial.println(i);
-    Serial.print("\t green led on pin : ");Serial.print(traffic_light[i].green);Serial.print(" , DCC address : ");Serial.print(traffic_light[i].address);Serial.println("/0"); 
-    Serial.print("\t red led on pin : ");Serial.print(traffic_light[i].red);Serial.print(" , DCC address : ");Serial.print(traffic_light[i].address);Serial.println("/1");
-    if (NB_TRAFFIC_LIGHT == TRICOLOR) {
-      Serial.print("\t yellow led on pin : ");Serial.print(traffic_light[i].yellow);Serial.print(" , DCC address : ");Serial.print(traffic_light[i].address+1);Serial.println("/0");
-      }
-   }
-  #endif
 
-
-// MCP Setup overall on MCP 1
-  byte mcp1error;
-  Wire.begin(); 
-  Wire.beginTransmission(MCP23017_ADDR1);
-  mcp1error = Wire.endTransmission();  // check I2C 
-  #ifdef CONSOLE
-   if (mcp1error == 0) Serial.println("MCP1 connected OK"); else Serial.println("Something wrong on MCP1 connection");
-  #endif
-    /* start MCP on both banks */
-  mcp1.begin(MCP23017_ADDR1,&Wire);
-
-/*
-// MCP Setup overall on MCP 2 DOES NOT WORK 
-  byte mcp2error;
-  Wire.begin(); 
-  Wire.beginTransmission(MCP23017_ADDR2);
-  mcp2error = Wire.endTransmission(MCP23017_ADDR2);  // check I2C 
-  #ifdef CONSOLE
-   if (mcp2error == 0) Serial.println("MCP2 connected OK"); else Serial.println("Something wrong on MCP2 connection");
-  #endif
-  */
-    /* start MCP on both banks */
-  // mcp2.begin(MCP23017_ADDR2);
-  // MCP Setup open ports     
-     for (int j=0;j<3;j++) { 
-      for (int i=0; i<5;i++)  mcp1.pinMode(i*3+j, OUTPUT); //define pin for output
-   /*  for (int j=0;j<3;j++) { 
-      for (int i=0; i<5;i++)  mcp2.pinMode(i*3+j, OUTPUT); //define pin for outpu
-    }*/
-                                                            
-  Serial.println("Let's go now ...");
-}
-}
-
-/*************************************************************************
- * loop
- *************************************************************************/
- 
-void loop() {
-  test_at_start();
-  delay(100);
+  for (int i=0;i<INSTALLEDMCPNB;i++) {
+    byte mcperror;
+    // wire method is not required with Adafruit lib, but this alloows to test the MCP at I2C level
+    Wire.begin(); 
+    Wire.beginTransmission(mcp_board[i].mcpi2caddr);
+    mcperror = Wire.endTransmission();  // check I2C 
+    if (mcperror == 0) { Serial.print("MCP");Serial.print(i);Serial.print(" connected OK at "); Serial.println(mcp_board[i].mcpi2caddr);}
+      else { Serial.print("MCP");Serial.print(i);Serial.print(" NOT connected OK at "); Serial.println(mcp_board[i].mcpi2caddr);}
+    Serial.print("Begin on board ");
+    Serial.print(mcp_board[i].mcpnum);
+    mcps[i].begin(mcp_board[i].mcpnum);
+    // now declare ports for output
+    for (int j=0;j<mcp_board[i].usedport;j++) {
+      mcps[i].pinMode(j, OUTPUT);
+      Serial.print(" output MCP");Serial.print(i);Serial.print(" port ");Serial.print(j);
+    }
   }
+  Serial.println("et c'est parti..");
   
+
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  test_at_start();
+}
