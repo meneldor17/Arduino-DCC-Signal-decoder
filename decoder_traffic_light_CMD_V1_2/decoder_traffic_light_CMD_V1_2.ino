@@ -64,7 +64,7 @@
 #define CONSOLE                             // output console, delete or comment this after checking the configuration to avoid serial messages
 #define MODE   HIGH                          // LOW or HIGH for CDM Standard : HIGH
 #define FIRST_ID_DCC   203                   // first DCC address, DCC_CODE
-#define NB_TRAFFIC_LIGHT  TRICOLOR           //  TRICOLOR or BICOLOR 
+#define NB_TRAFFIC_LIGHT  10           //  ssuming this is tricolor 
 
 /**********************************************************************************  
  *   DON'T CHANGE THE FOLLOWING
@@ -79,22 +79,29 @@
 #include <Wire.h>
 #include "Adafruit_MCP23017.h" // The one that was working better with CQRobot shield
 
-#define MCP23017_ADDR1 0x27  // I2C addr of the PCM23017 0x20 for the diymore 0x27 for the CQRobot, in case does not work  : use I2C_Scanner 
-#define MCPNUM1 7
 
-#define MCP23017_ADDR2 0x23  // I2C addr for second CQRobot, A3 strapped on the board
-#define MCPNUM2 3
 
-Adafruit_MCP23017 mcp1; // with this one we can now address the 16 ports of the MCP using I2C
-Adafruit_MCP23017 mcp2; // with this one we can now address the 16 ports of the MCP using I2C
-
-#define MCP1PORTNUMBER 16 //we will use only 0 to 14 as we have 3 pins per traffic light
-#define MCP2PORTNUMBER 16
-
-#define INSTALLEDMCPNB 3 // number of installed MCP
+#define INSTALLEDMCPNB 2 // number of installed MCP
 #define DELAY1 3000 // used in initial test 
 #define DELAY2 2000
+// having this structure will allow to match the phisical setup of your mcps
+struct mcpchip {
+  int mcpnum; // to be used with adafruit MCP23017 library to initiate (begin)
+  int mcpi2caddr; // I2C address, has to match the mcpnum num above 
+  int usedport; // really used ports has to be lower than 16 
+};
 
+mcpchip mcp_board[8] = {
+  {7,0x27,16},
+  {3,0x23,16},
+  {2,0x22,16},
+  {1,0x21,16},
+  {4,0x24,16},
+  {5,0x25,16},
+  {0,0x20,16}
+}; 
+
+Adafruit_MCP23017 mcps[INSTALLEDMCPNB];
 
 //  DCC
 
@@ -106,8 +113,8 @@ volatile boolean update_light;          // set if an update should be processed 
 
 // traffic light
 
-#define BICOLOR  8                     // 8 traffic lights with two leds
-#define TRICOLOR 5                     // 5 traffic lights with three leds
+#define BICOLOR  8                     // 8 traffic lights with two leds per MCP
+#define TRICOLOR 5                     // 5 traffic lights with three leds per MCP
 #define FIRST_PIN         0             // pin of the first traffic light  on the MCP
 #define GREEN             0             // address DCC/0
 #define RED               1             // address DCC/1 
@@ -153,7 +160,8 @@ void test_at_start() {  // cycle all lights color by color
       Serial.println();Serial.print("color cycle finished for color ");Serial.println(k);      
     }
 }
-**************************************************************
+
+/**************************************************************
  * method called if a request is made by the DCC
  * 
  *******************************************************************/
@@ -174,25 +182,25 @@ void activation_traffic_light() {
       switch(traffic_light[i].current_position)            // we look the current position
       { 
         case GREEN :{                                                     // if green led
-                      mcp1.digitalWrite(traffic_light[i].green,MODE);         // switch on green
-                      mcp1.digitalWrite(traffic_light[i].red,!MODE);          // switch off red
-                      if ( NB_TRAFFIC_LIGHT == TRICOLOR){mcp1.digitalWrite(traffic_light[i].yellow,!MODE);} // switch off yellow
+                      mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].green,MODE);         // switch on green
+                      mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].red,!MODE);          // switch off red
+                      if ( NB_TRAFFIC_LIGHT == TRICOLOR){mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].yellow,!MODE);} // switch off yellow
                       #ifdef CONSOLE
                         Serial.print("activation -> traffic light");Serial.print(i+1);Serial.println(" : Green led");
                       #endif
                       break;}
         case RED : {                                                  // if red led
-                      mcp1.digitalWrite(traffic_light[i].green,!MODE);      // switch off green
-                      mcp1.digitalWrite(traffic_light[i].red,MODE);         // switch on red
-                      if ( NB_TRAFFIC_LIGHT == TRICOLOR){mcp1.digitalWrite(traffic_light[i].yellow,!MODE);} // switch off yellow
+                      mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].green,!MODE);      // switch off green
+                      mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].red,MODE);         // switch on red
+                      if ( NB_TRAFFIC_LIGHT == TRICOLOR){mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].yellow,!MODE);} // switch off yellow
                       #ifdef CONSOLE
                         Serial.print("activation -> traffic light");Serial.print(i+1);Serial.println(" : Red led");
                       #endif
                      break;}
          case YELLOW : {                                                  // if yellow led
-                      mcp1.digitalWrite(traffic_light[i].green,!MODE);         // switch off green 
-                      mcp1.digitalWrite(traffic_light[i].red,!MODE);           // switch off red
-                      mcp1.digitalWrite(traffic_light[i].yellow,MODE);         // switch on yellow
+                      mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].green,!MODE);         // switch off green 
+                      mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].red,!MODE);           // switch off red
+                      mcps[(int) i/TRICOLOR].digitalWrite(traffic_light[i].yellow,MODE);         // switch on yellow
                       #ifdef CONSOLE
                         Serial.print("activation -> traffic light");Serial.print(i+1);Serial.println(" : Yellow led");
                       #endif                      
@@ -262,52 +270,26 @@ void setup() {
 
 
 // MCP Setup overall on MCP 1
-  byte mcp1error;
-  Wire.begin(); 
-  Wire.beginTransmission(MCP23017_ADDR1);
-  mcp1error = Wire.endTransmission();  // check I2C 
-  #ifdef CONSOLE
-   if (mcp1error == 0) Serial.println("MCP1 connected OK"); else Serial.println("Something wrong on MCP1 connection");
-  #endif
-    /* start MCP on both banks */
-  mcp1.begin(MCPNUM1);
-
-  // MCP Setup overall on MCP 2 DOES NOT WORK 
-  byte mcp2error;
-  Wire.begin(); 
-  Wire.beginTransmission(MCP23017_ADDR2);
-  mcp2error = Wire.endTransmission(MCP23017_ADDR2);  // check I2C 
-  #ifdef CONSOLE
-   if (mcp2error == 0) Serial.println("MCP2 connected OK"); else Serial.println("Something wrong on MCP2 connection");
-  #endif
-    /* start MCP on both banks */
-  mcp2.begin(MCPNUM2);
-  // MCP Setup open ports 
   
-  int pin_jump = 0;                                                     // a jump for traffic light pins
-  int traffic_light_jump = 0;                                           // a jump for traffic light number
-  for (int i=0; i<NB_TRAFFIC_LIGHT; i++){                               // for all the traffic lights
-    traffic_light[i].activation_request = false;                        // no activation request
-    traffic_light[i].green = pin_jump + FIRST_PIN;                      // pin number of the green led
-    mcp1.pinMode(traffic_light[i].green, OUTPUT);                            // green led in output(ID DCC/0)                                                                                                                                                                                                                                                                   
-    mcp1.digitalWrite(traffic_light[i].green, !MODE);                       // green led switch off
-    traffic_light[i].red = 1+ pin_jump + FIRST_PIN;                    // pin number of the red led
-    mcp1.pinMode(traffic_light[i].red, OUTPUT);                             // red led in output  (ID DCC/1)
-    mcp1.digitalWrite(traffic_light[i].red, MODE);                          // red led switch on
-    if (NB_TRAFFIC_LIGHT == TRICOLOR) {                                // if three leds
-      traffic_light[i].address = traffic_light_jump + FIRST_ID_DCC + i;   // its DCC ID
-      traffic_light[i].yellow = 2+ pin_jump + FIRST_PIN;               // pin number of the yellow led
-      mcp1.pinMode(traffic_light[i].yellow, OUTPUT);                        // yellow led in output  (ID DCC+1/0)
-      mcp1.digitalWrite(traffic_light[i].yellow, !MODE);                    // yellow led switch off
-      traffic_light_jump++;                                             // the following traffic light 
-      pin_jump+=3;                                                     // the following pin for three leds
-          }
-    else {                                                             // if two leds
-         traffic_light[i].address = FIRST_ID_DCC + i;                  // its DCC ID
-        pin_jump+=2;                                                   // the following pin for two leds
-        }
+  for (int i=0;i<INSTALLEDMCPNB;i++) {
+    byte mcperror;
+    // wire method is not required with Adafruit lib, but this alloows to test the MCP at I2C level
+    Wire.begin(); 
+    Wire.beginTransmission(mcp_board[i].mcpi2caddr);
+    mcperror = Wire.endTransmission();  // check I2C 
+    if (mcperror == 0) { Serial.print("MCP");Serial.print(i);Serial.print(" connected OK at "); Serial.println(mcp_board[i].mcpi2caddr);}
+      else { Serial.print("MCP");Serial.print(i);Serial.print(" NOT connected OK at "); Serial.println(mcp_board[i].mcpi2caddr);}
+    Serial.print("Begin on board ");
+    Serial.print(mcp_board[i].mcpnum);
+    mcps[i].begin(mcp_board[i].mcpnum);
+    // now declare ports for output
+    for (int j=0;j<mcp_board[i].usedport;j++) {
+      mcps[i].pinMode(j, OUTPUT);
+      Serial.print(" output MCP");Serial.print(i);Serial.print(" port ");Serial.print(j);
+    }
   }
   test_at_start(); // cycle all lights ... 
+  
   DCC.SetBasicAccessoryDecoderPacketHandler(BasicAccDecoderPacket_Handler, true);   // instanciate the DCC
   DCC.SetupDecoder( 0x00, 0x00, kDCC_INTERRUPT );                                   // its IT
   update_light = false;                                                             // no update  
